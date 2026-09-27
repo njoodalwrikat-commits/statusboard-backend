@@ -22,9 +22,16 @@ defaults:
   run:
     shell: powershell
 
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: self-hosted
+    environment: production
+    timeout-minutes: 30
+
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
@@ -100,44 +107,57 @@ jobs:
             }
             Start-Sleep -Seconds 5
           }
+
           if (-not $ok) {
             Write-Host "Health check FAILED after 5 attempts. Rolling back..."
             $latest = Get-ChildItem $env:BACKUP_ROOT -Filter 'backend-*.zip' |
-              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+
             if ($latest) {
               Write-Host "Rolling back to $($latest.Name)"
               Import-Module WebAdministration
               Stop-WebAppPool -Name $env:APP_POOL -ErrorAction SilentlyContinue
-              Get-ChildItem $env:SITE_PATH -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+              Get-ChildItem $env:SITE_PATH -Force |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
               Expand-Archive -Path $latest.FullName -DestinationPath $env:SITE_PATH -Force
               Start-WebAppPool -Name $env:APP_POOL
               Write-Host "Rollback complete."
             } else {
               Write-Host "No backup found to roll back to."
             }
+
             exit 1
           }
 
   release:
     needs: deploy
     runs-on: self-hosted
-    environment: production
+
     steps:
       - name: Create the tag and GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
           $body = @{
             tag_name         = "backend-v${{ github.event.inputs.version }}"
             target_commitish = "${{ github.sha }}"
             name             = "backend v${{ github.event.inputs.version }}"
             body             = "Deployed to IIS by the CD pipeline."
           } | ConvertTo-Json
+
           $headers = @{
             Authorization = "Bearer $env:GH_TOKEN"
             "User-Agent"  = "cd-pipeline"
             Accept        = "application/vnd.github+json"
           }
-          Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/${{ github.repository }}/releases" -Headers $headers -Body $body
+
+          Invoke-RestMethod `
+            -Method Post `
+            -Uri "https://api.github.com/repos/${{ github.repository }}/releases" `
+            -Headers $headers `
+            -Body $body
+
           Write-Host "Release backend-v${{ github.event.inputs.version }} created."
