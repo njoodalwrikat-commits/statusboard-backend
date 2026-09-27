@@ -100,7 +100,11 @@ jobs:
           for ($i = 1; $i -le 5; $i++) {
             try {
               $resp = Invoke-WebRequest -UseBasicParsing -Uri $env:HEALTH_URL -TimeoutSec 20
-              if ($resp.StatusCode -eq 200) { $ok = $true; Write-Host "Health check passed: $($resp.Content)"; break }
+              if ($resp.StatusCode -eq 200) {
+                $ok = $true
+                Write-Host "Health check passed: $($resp.Content)"
+                break
+              }
               Write-Host "Attempt ${i}: unexpected status $($resp.StatusCode)"
             } catch {
               Write-Host "Attempt $i failed: $_"
@@ -129,6 +133,21 @@ jobs:
 
             exit 1
           }
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          @"
+          ## Deployment Summary
+
+          | Item | Value |
+          |---|---|
+          | Version | ${{ github.event.inputs.version }} |
+          | Environment | production |
+          | Site path | $env:SITE_PATH |
+          | App pool | $env:APP_POOL |
+          | Health URL | $env:HEALTH_URL |
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
   release:
     needs: deploy
