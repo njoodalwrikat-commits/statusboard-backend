@@ -107,6 +107,7 @@ jobs:
         with:
           name: coverage-report
           path: coverage/
+          retention-days: 7
 
   build:
     needs: [lint, security, coverage]
@@ -134,3 +135,4 @@ jobs:
         with:
           name: status-backend-build
           path: dist/status-backend-ci.zip
+          retention-days: 7

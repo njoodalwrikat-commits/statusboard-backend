@@ -24,7 +24,7 @@ defaults:
 
 concurrency:
   group: cd-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -137,17 +137,9 @@ jobs:
       - name: Deployment summary
         if: always()
         run: |
-          @"
-          ## Deployment Summary
-
-          | Item | Value |
-          |---|---|
-          | Version | ${{ github.event.inputs.version }} |
-          | Environment | production |
-          | Site path | $env:SITE_PATH |
-          | App pool | $env:APP_POOL |
-          | Health URL | $env:HEALTH_URL |
-          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+          "Deployed v${{ github.event.inputs.version }} at $time" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
   release:
     needs: deploy
@@ -180,3 +172,4 @@ jobs:
             -Body $body
 
           Write-Host "Release backend-v${{ github.event.inputs.version }} created."
+          
