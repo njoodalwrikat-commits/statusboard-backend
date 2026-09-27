@@ -53,7 +53,7 @@ jobs:
       - name: Dependency vulnerability scan
         run: npm audit --audit-level=high
 
-  test:
+    test:
     runs-on: self-hosted
     strategy:
       matrix:
