@@ -12,19 +12,26 @@ permissions:
   contents: write
 
 env:
-  SITE_PATH: 'C:\inetpub\wwwroot\statusboard-backend'
-  BACKUP_ROOT: 'C:\deployments\backups\statusboard-backend'
-  APP_POOL: 'statusboard-backend'
-  HEALTH_URL: 'http://localhost:8888/health'
-  KEEP_BACKUPS: '5'
+  SITE_PATH: ${{ vars.SITE_PATH }}
+  BACKUP_ROOT: ${{ vars.BACKUP_ROOT }}
+  APP_POOL: ${{ vars.APP_POOL }}
+  HEALTH_URL: ${{ vars.HEALTH_URL }}
+  KEEP_BACKUPS: ${{ vars.KEEP_BACKUPS }}
 
 defaults:
   run:
     shell: powershell
 
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: self-hosted
+    environment: production
+    timeout-minutes: 30
+
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
@@ -93,50 +100,76 @@ jobs:
           for ($i = 1; $i -le 5; $i++) {
             try {
               $resp = Invoke-WebRequest -UseBasicParsing -Uri $env:HEALTH_URL -TimeoutSec 20
-              if ($resp.StatusCode -eq 200) { $ok = $true; Write-Host "Health check passed: $($resp.Content)"; break }
+              if ($resp.StatusCode -eq 200) {
+                $ok = $true
+                Write-Host "Health check passed: $($resp.Content)"
+                break
+              }
               Write-Host "Attempt ${i}: unexpected status $($resp.StatusCode)"
             } catch {
               Write-Host "Attempt $i failed: $_"
             }
             Start-Sleep -Seconds 5
           }
+
           if (-not $ok) {
             Write-Host "Health check FAILED after 5 attempts. Rolling back..."
             $latest = Get-ChildItem $env:BACKUP_ROOT -Filter 'backend-*.zip' |
-              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+
             if ($latest) {
               Write-Host "Rolling back to $($latest.Name)"
               Import-Module WebAdministration
               Stop-WebAppPool -Name $env:APP_POOL -ErrorAction SilentlyContinue
-              Get-ChildItem $env:SITE_PATH -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+              Get-ChildItem $env:SITE_PATH -Force |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
               Expand-Archive -Path $latest.FullName -DestinationPath $env:SITE_PATH -Force
               Start-WebAppPool -Name $env:APP_POOL
               Write-Host "Rollback complete."
             } else {
               Write-Host "No backup found to roll back to."
             }
+
             exit 1
           }
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+          "Deployed v${{ github.event.inputs.version }} at $time" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
   release:
     needs: deploy
     runs-on: self-hosted
+
     steps:
       - name: Create the tag and GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
           $body = @{
             tag_name         = "backend-v${{ github.event.inputs.version }}"
             target_commitish = "${{ github.sha }}"
             name             = "backend v${{ github.event.inputs.version }}"
             body             = "Deployed to IIS by the CD pipeline."
           } | ConvertTo-Json
+
           $headers = @{
             Authorization = "Bearer $env:GH_TOKEN"
             "User-Agent"  = "cd-pipeline"
             Accept        = "application/vnd.github+json"
           }
-          Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/${{ github.repository }}/releases" -Headers $headers -Body $body
+
+          Invoke-RestMethod `
+            -Method Post `
+            -Uri "https://api.github.com/repos/${{ github.repository }}/releases" `
+            -Headers $headers `
+            -Body $body
+
           Write-Host "Release backend-v${{ github.event.inputs.version }} created."
+          
