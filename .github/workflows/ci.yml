@@ -53,11 +53,12 @@ jobs:
       - name: Dependency vulnerability scan
         run: npm audit --audit-level=high
 
-    test:
+  test:
     runs-on: self-hosted
     strategy:
       matrix:
         node-version: [18, 20]
+
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
